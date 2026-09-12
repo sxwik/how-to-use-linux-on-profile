@@ -1,69 +1,148 @@
-# 🖥️ Linux on my GitHub profile
+# 🖥️ Linux on a GitHub Profile
 
-A real shared Alpine Linux guest is running behind the terminal shown on [my GitHub profile](https://github.com/sxwik).
+This is a deliberately cursed experiment: a **real Alpine Linux x86_64 filesystem** is booted inside **QEMU on GitHub Actions**, commands are executed inside that guest, the guest disk is persisted between runs, and the resulting console is rendered back onto my GitHub profile.
 
-Everyone interacts with the **same guest state**.
+It also has a Doom mode: **Chocolate Doom runs inside the same Alpine guest**, not as a separate desktop process on the GitHub runner.
 
-## Use it
+👉 [Open the live console — Issue #1](https://github.com/sxwik/sxwik/issues/1)
 
-### 1. Open the console
+---
 
-[Open the SXWIK Linux Console →](https://github.com/sxwik/sxwik/issues/1)
+## What is actually running?
 
-### 2. Add a comment
+The important distinction is that there are **three different layers**:
 
-Put **one Linux command** in the comment box and post it.
+```text
+┌───────────────────────────────────────────────────────────┐
+│ GitHub                                                     │
+│                                                           │
+│  Issue #1 / Actions / repository                          │
+│                 │                                         │
+│                 ▼                                         │
+│       GitHub-hosted Ubuntu runner                         │
+│                 │                                         │
+│                 ▼                                         │
+│            QEMU x86_64 TCG                                │
+│                 │                                         │
+│                 ▼                                         │
+│          Alpine Linux x86_64                              │
+│                 │                                         │
+│          ┌──────┴────────┐                                 │
+│          │               │                                 │
+│       shell          Doom mode                            │
+│                          │                                 │
+│                  Xvfb + Openbox                           │
+│                          │                                 │
+│                  Chocolate Doom                           │
+│                          │                                 │
+│                       Freedoom                            │
+│                                                           │
+└───────────────────────────────────────────────────────────┘
+```
+
+The Ubuntu machine is only the **host**. The interesting part is the Alpine guest running inside QEMU.
+
+For normal commands, the workflow boots Alpine and executes a shell command in the guest.
+
+For Doom commands, the workflow boots the same Alpine disk, starts a virtual X server **inside Alpine**, launches Chocolate Doom there, injects the requested input, captures the frame, closes Doom, and then finishes by syncing the same Alpine disk.
+
+---
+
+# 🚀 How to use it
+
+## 1. Open the console
+
+Go to:
+
+**[SXWIK Linux Console — Issue #1](https://github.com/sxwik/sxwik/issues/1)**
+
+The issue is effectively the public command interface.
+
+## 2. Run a normal Linux command
+
+Post a single command as a comment:
 
 ```bash
 uname -a
 ```
 
-GitHub Actions then boots the guest, runs the command, persists the disk, and regenerates the terminal snapshot used by the profile.
-
-Try:
+Other useful tests:
 
 ```bash
-ls -la
 pwd
 whoami
+ls -la
 cat /etc/os-release
 echo hello
-uname -a
+uname -srmo
 ```
 
-### 3. Watch the profile
+The comment is picked up by the Linux command router, GitHub Actions starts a fresh Ubuntu runner, and that runner boots the persistent Alpine disk with QEMU.
 
-[Open the profile →](https://github.com/sxwik)
+## 3. Wait for the workflow
 
-Refresh the profile after the workflow finishes to see the new terminal state.
+The runner restores the latest saved filesystem image, executes the command, captures the console output, saves the new filesystem image as an Actions artifact, and updates the profile screen.
 
-## DOOM mode 💀
+The profile is **not a live terminal**. It is a generated snapshot of the latest result.
 
-The same issue now has a cursed second mode: **Chocolate Doom running on a GitHub-hosted runner, with the resulting game screen committed back into the profile.**
+---
 
-Write `doom` at the start of a comment and everything after it becomes a stacked input program:
+# 💀 Doom mode
+
+Doom is controlled from the same Issue #1 interface.
+
+Start a Doom command with:
 
 ```text
 doom
-
-doom !w !w !w !d !d !space
-
-doom !w*20 !d*5 !space !wait:1000 !a*10
 ```
 
-### Keyboard
+or:
 
-Most normal keyboard keys are available as `!` actions:
+```text
+doom !enter !enter !w*20 !d*10 !space
+```
+
+Everything after `doom` is interpreted as an input program.
+
+### Keyboard
 
 ```text
 !w !a !s !d
 !up !down !left !right
 !space !enter !esc !tab
 !shift !ctrl !alt
-!f1 ... !f12
+!f1 !f2 ... !f12
 ```
 
-You can also use explicit X11 key names with `!key:name`.
+Explicit key names are also supported:
+
+```text
+!key:F1
+!key:Return
+```
+
+### Repetition
+
+```text
+!w*20
+!space*3
+!right*8
+```
+
+### Holds
+
+```text
+!hold:w:1500
+```
+
+That means hold `w` for 1500 ms.
+
+### Waits
+
+```text
+!wait:500
+```
 
 ### Mouse
 
@@ -78,121 +157,394 @@ You can also use explicit X11 key names with `!key:name`.
 !mouse:40:-10
 ```
 
-### Timing and holds
+### Typing
 
 ```text
-!wait:500
-!hold:w:1500
-!space*3
+!type:hello
 ```
 
-A whole input sequence runs in one workflow, so you can stack movement, firing, clicks, waits, and key presses without needing a separate comment for every action.
+The complete sequence is executed in one workflow run.
 
-### Examples
-
-Start Doom and immediately move/fire:
+Example:
 
 ```text
-doom !enter !enter !w*8 !space
+doom !enter !enter !w*8 !space !wait:500 !a*5
 ```
 
-Turn, shoot, strafe, then turn back:
+---
+
+# 🧠 How the Linux machine persists
+
+This is **not** a long-running VM.
+
+GitHub-hosted runners are temporary. Every workflow run gets a fresh runner, so the VM is reconstructed on every run.
+
+The trick is the disk image.
 
 ```text
-doom !right*8 !space !a*6 !left*8 !space
+Run N
+  │
+  ├─ download latest linux-state artifact
+  │
+  ├─ boot linux-state.img in QEMU
+  │
+  ├─ modify filesystem
+  │
+  ├─ shut down guest
+  │
+  └─ upload linux-state.img
+              │
+              ▼
+          Run N+1
+              │
+              └─ restore same image
 ```
 
-The screenshot on the profile is the **latest captured game frame**, not a live browser game. The game itself runs on the GitHub-hosted runner and disappears when that workflow ends.
+So the **machine is recreated**, but the **filesystem survives**.
 
-## Run a command from GitHub Actions
+That is why this feels like one shared Linux box even though there is no permanent server sitting somewhere.
 
-You can also skip the issue and manually dispatch the workflow.
+---
 
-[Open **Actions → SXWIK Linux Console**](https://github.com/sxwik/sxwik/actions/workflows/linux-console.yml)
+# 💾 What is inside the disk?
 
-For Doom, use the **SXWIK DOOM** workflow instead.
+The persistent image is an ext4 filesystem based on Alpine Linux.
 
-## The machine
+On the first run, the workflow creates the disk and extracts an Alpine minirootfs into it.
+
+After that, the same disk image is restored from the newest `sxwik-linux-state-*` Actions artifact.
+
+The guest currently uses roughly **512 MiB of virtual disk space** and **512 MiB RAM**.
+
+The disk can therefore remember things such as:
 
 ```text
-GitHub Issue comment
+/root files
+/root/.doom-saves
+installed Alpine packages
+files created by commands
+configuration changes
+```
+
+The exact contents are shared between users because everyone is interacting with the same persisted image.
+
+---
+
+# 🎮 How Doom works inside Alpine
+
+Doom is not a second VM and it is not running directly on Ubuntu.
+
+When the command begins with `doom`, the Alpine-side startup script does approximately this:
+
+```text
+boot Alpine
+   │
+   ├─ detect "doom" command
+   │
+   ├─ install Chocolate Doom + dependencies
+   │      └─ only when they are not already present
+   │
+   ├─ start Xvfb on :99
+   ├─ start Openbox
+   ├─ start Chocolate Doom
+   ├─ send XTEST keyboard/mouse events
+   ├─ capture 1280×720 screenshot
+   ├─ kill Chocolate Doom
+   ├─ stop Xvfb/Openbox
+   │
+   └─ continue to the normal Alpine shutdown/sync path
+```
+
+The important part is the middle:
+
+```text
+Alpine
+  └── Xvfb
+       └── Openbox
+            └── Chocolate Doom
+```
+
+So when Doom exits, it is simply another process being terminated inside the guest. The workflow then returns to the normal Alpine command-completion path and persists the disk.
+
+---
+
+# 🖼️ How the profile screen is generated
+
+The profile image is not streamed from the VM.
+
+For Linux commands:
+
+```text
+serial console output
         │
-        ├──────────────────────┐
-        ▼                      ▼
-GitHub Actions             GitHub Actions
-        │                      │
-        ▼                      ▼
-QEMU x86_64              Xvfb + Chocolate Doom
-        │                      │
-        ▼                      ▼
-Alpine Linux             xdotool input program
-        │                      │
-        ▼                      ▼
-terminal SVG/PNG         Doom screenshot
-        │                      │
-        └──────────┬───────────┘
-                   ▼
-             github.com/sxwik
+        ▼
+/tmp/console.tail
+        │
+        ▼
+SVG terminal renderer
+        │
+        ▼
+linux/screen.svg
 ```
 
-The Linux guest is a small **Alpine Linux x86_64** system booted by QEMU with a serial console. There is no GUI and no network attached to the guest.
+For Doom:
 
-Doom is separate from that guest: it uses Chocolate Doom + the Freedoom IWAD on an Ubuntu GitHub-hosted runner, with Xvfb providing the virtual display and xdotool generating keyboard/mouse events.
+```text
+Alpine X display
+      │
+      ▼
+/root/doom.png
+      │
+      ▼
+runner extracts image
+      │
+      ▼
+linux/screen.svg
+```
 
-## ⚠️ Cons / limitations
+The repository profile then points at the generated `screen.svg` and uses a cache-busting query parameter so GitHub is encouraged to fetch the newest version.
 
-This is intentionally cursed. It works, but it is **not** a normal interactive terminal or live game.
+That means the image you see on the profile is always a **snapshot**, never a live framebuffer.
 
-### ~45 seconds per Linux command / longer for Doom
+---
 
-A GitHub-hosted runner has to start, install tools, restore state, boot the VM or game, capture the result, commit it, and finish the workflow. Doom also has to install Chocolate Doom, Freedoom, Xvfb, and xdotool.
+# 🔐 Command routing
 
-### Not real-time
+The public Issue #1 interface separates normal Linux commands and Doom commands.
 
-You cannot type interactively character-by-character into the Linux process or play Doom in real time. Commands and input programs are submitted as GitHub comments or workflow inputs.
+Normal commands are routed to the Linux workflow.
 
-### Commands can race
+Commands beginning with `doom` are routed to Doom handling.
 
-Linux and Doom share a concurrency lock so two updates do not try to commit the profile screen at once. A newer run can cancel an older run.
+That separation is intentional so a Doom command cannot accidentally be executed as a shell command.
 
-### The display is a snapshot
+The Linux workflow also validates the command as a single line and limits its length.
 
-The profile displays the latest generated PNG. GitHub may cache images, so a refresh can be needed before the newest state appears.
+Doom input is similarly limited to a bounded number of actions so a single comment cannot create an absurdly long workflow run.
 
-### Shared by everyone
+---
 
-The Linux guest has one public shared state. Another visitor can modify the filesystem before your next command. Doom itself is a fresh game session for each run.
+# 🛑 Stopping Doom
 
-### Small guest
+Doom runs only for the duration of its Action job.
 
-The Linux machine is intentionally tiny. It is not a full desktop distribution and is not intended for heavy workloads.
+To cancel an active Doom run, comment:
 
-### No network in the Linux VM
+```text
+doom stop
+```
 
-The Linux guest has no network interface. `curl`, `wget`, package installation, DNS lookups, and other network-dependent commands will not work inside the guest.
+or:
 
-### GitHub Actions dependency
+```text
+doom-stop
+```
 
-Everything depends on GitHub Actions, Issues, repository write access, runner availability, and Actions artifacts. If Actions is delayed, disabled, or unavailable, the display cannot update.
+The stop workflow looks for an active `SXWIK DOOM` run and asks GitHub Actions to cancel it.
 
-### Snapshot persistence, not a live server
+When a normal Doom run reaches its end, the guest-side script also explicitly kills the Doom process before syncing the Alpine filesystem.
 
-The Linux guest is not running continuously between commands. Its disk is restored into a fresh runner and then saved again as an artifact after the command completes.
+So there is no hidden permanent Doom process left running between Actions jobs.
 
-### GitHub rate / platform limits
+---
 
-This project inherits GitHub's limits, runner availability, artifact retention, and abuse/rate-control behavior. It is an experiment built on GitHub rather than a conventional hosted VM.
+# ⚙️ Manual workflow dispatch
 
-### Not for secrets
+You can also run the workflows without using Issue comments.
 
-Never put passwords, tokens, API keys, private files, or other sensitive data into the guest or public issue conversation.
+### Linux
 
-## Links
+[Open SXWIK Linux Console workflow](https://github.com/sxwik/sxwik/actions/workflows/linux-console.yml)
+
+Enter the command in the workflow input.
+
+### Doom
+
+[Open SXWIK DOOM workflow](https://github.com/sxwik/sxwik/actions/workflows/doom.yml)
+
+The Doom workflow is retained as a manual entry point, while the public Issue interface is the easiest way to use the machine.
+
+---
+
+# 🏗️ The actual workflow architecture
+
+Here is the end-to-end path for a normal Linux command:
+
+```text
+Issue comment
+     │
+     ▼
+GitHub Actions router
+     │
+     ▼
+Ubuntu GitHub-hosted runner
+     │
+     ├─ restore latest linux-state artifact
+     │
+     ├─ prepare Alpine disk
+     │
+     ├─ download Alpine kernel/initramfs
+     │
+     ├─ build minimal initramfs with VirtIO/ext4 modules
+     │
+     ▼
+QEMU x86_64 (TCG)
+     │
+     ▼
+Alpine Linux
+     │
+     ├─ mount /dev/vda
+     ├─ execute /root/.sxwik-command
+     ├─ sync
+     └─ emit SXWIK_DONE
+     │
+     ▼
+runner captures serial output
+     │
+     ├─ render screen.svg
+     ├─ commit profile changes
+     └─ upload updated linux-state.img
+```
+
+And for Doom:
+
+```text
+Issue comment: doom ...
+          │
+          ▼
+    Doom routing
+          │
+          ▼
+   restore same disk
+          │
+          ▼
+      QEMU x86_64
+          │
+          ▼
+      Alpine Linux
+          │
+          ├── Xvfb
+          │    └── Openbox
+          │         └── Chocolate Doom
+          │
+          ├── inject inputs
+          ├── capture doom.png
+          ├── close Doom
+          ├── sync filesystem
+          └── SXWIK_DONE
+          │
+          ▼
+   extract screenshot
+          │
+          ▼
+      screen.svg
+          │
+          ▼
+     GitHub profile
+```
+
+---
+
+# 📦 Files that make it work
+
+The main repository contains the implementation pieces.
+
+```text
+.github/workflows/linux-console.yml
+    Main Alpine/QEMU execution pipeline.
+
+.github/workflows/doom.yml
+    Doom entry point and manual Doom workflow.
+
+.github/workflows/doom-stop.yml
+    Cancels an active Doom workflow.
+
+scripts/doom-input.py
+    Parses the compact Doom input language and sends XTEST events.
+
+machine/
+    Machine/bootstrap related files.
+
+linux/state artifact
+    Persistent filesystem image restored between runs.
+```
+
+The exact implementation can change over time, but the architectural idea stays the same: **GitHub Actions provides the disposable host, QEMU provides the guest hardware, Alpine provides the persistent userspace, and GitHub artifacts provide the illusion of a continuing machine.**
+
+---
+
+# ⚠️ Limitations
+
+### It is not real-time
+
+There is no permanent interactive SSH session or browser terminal. Every command is a workflow execution.
+
+### The VM is not always running
+
+Between Actions jobs there is no live QEMU process. The disk survives; the machine does not.
+
+### Doom is not a live web game
+
+The profile only receives the final captured frame from a run.
+
+### It is shared
+
+The same filesystem image is shared across users. Someone else can modify it before your next command.
+
+### It is intentionally small
+
+This is an experiment, not a replacement for a normal VPS.
+
+### Network behavior is limited
+
+The guest environment is designed around the workflow's controlled boot path and should not be treated as a normal internet-connected server.
+
+### Actions can be slow
+
+Every run involves a GitHub-hosted runner, QEMU boot, image restoration, execution, rendering, Git operations, and artifact persistence.
+
+### GitHub controls the infrastructure
+
+Runner availability, Actions limits, artifact retention, repository permissions, rate limits, and caching can all affect the machine.
+
+### Do not store secrets
+
+Never put passwords, API tokens, private keys, personal documents, or other sensitive information into the guest or public Issue conversation.
+
+---
+
+# 🧪 Why this exists
+
+Because apparently putting a persistent Linux machine behind a GitHub profile README was not cursed enough.
+
+The fun part is that the pieces are individually ordinary:
+
+```text
+GitHub Issues
+GitHub Actions
+QEMU
+Alpine Linux
+ext4
+VirtIO
+Xvfb
+Openbox
+Chocolate Doom
+```
+
+The cursed part is combining them into one public interface and pretending the profile picture is a computer.
+
+---
+
+# 🔗 Links
 
 - 🖥️ [Live profile](https://github.com/sxwik)
 - 🎛️ [Public Linux Console — Issue #1](https://github.com/sxwik/sxwik/issues/1)
-- ⚙️ [SXWIK Linux Console workflow](https://github.com/sxwik/sxwik/actions/workflows/linux-console.yml)
-- 💀 [SXWIK DOOM workflow](https://github.com/sxwik/sxwik/actions/workflows/doom.yml)
-- 🧠 [Machine source](https://github.com/sxwik/sxwik/tree/main/machine)
-- 📟 [Linux workflow source](https://github.com/sxwik/sxwik/blob/main/.github/workflows/linux-console.yml)
+- ⚙️ [Linux workflow](https://github.com/sxwik/sxwik/blob/main/.github/workflows/linux-console.yml)
+- 💀 [Doom workflow](https://github.com/sxwik/sxwik/blob/main/.github/workflows/doom.yml)
+- 🛑 [Doom stop workflow](https://github.com/sxwik/sxwik/blob/main/.github/workflows/doom-stop.yml)
 - 🎮 [Doom input controller](https://github.com/sxwik/sxwik/blob/main/scripts/doom-input.py)
+- 🧠 [Machine source](https://github.com/sxwik/sxwik/tree/main/machine)
+
+---
+
+> **TL;DR:** Comment on Issue #1 → GitHub Actions boots a fresh QEMU VM → the same persistent Alpine disk is restored → your command runs inside Alpine → Doom can launch inside that same Alpine guest → the result is captured → the disk is saved again → the profile display gets updated.
